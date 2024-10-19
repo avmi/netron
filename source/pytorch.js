@@ -1690,63 +1690,9 @@ pytorch.Execution = class extends python.Execution {
                     const args = [this.data]; // self
                     if (this.data.forward.__code__ && this.data.forward.__code__.args) {
                         for (const arg of this.data.forward.__code__.args) {
-                            const defaultValue = (type, name) => {
-                                if (type.type === 'type' && type.name.type) {
-                                    switch (type.name.value) {
-                                        case 'Tensor': {
-                                            const tensor = execution.invoke('torch.Tensor', []);
-                                            tensor.__variable__ = name;
-                                            tensor.__origin__ = 'graph-input';
-                                            const value = execution.variable(tensor, execution.graph.param_node());
-                                            if (value && name) {
-                                                value.setDebugName(name);
-                                            }
-                                            return tensor;
-                                        }
-                                        case 'Tuple': {
-                                            return type.arguments.map((type, index) => defaultValue(type, `${name}[${index}]`));
-                                        }
-                                        case 'List': {
-                                            return type.arguments.map((type, index) => defaultValue(type, `${name}[${index}]`));
-                                        }
-                                        case 'Dict': {
-                                            if (type.arguments[1].name.value === 'Tensor') {
-                                                const Dict = class extends Map {
-                                                    get(key) {
-                                                        if (!super.has(key)) {
-                                                            super.set(key, defaultValue(type.arguments[1], `${name}:${key}`));
-                                                        }
-                                                        return super.get(key);
-                                                    }
-                                                };
-                                                return new Dict();
-                                            }
-                                            return new Map();
-                                        }
-                                        case 'int': {
-                                            return 0;
-                                        }
-                                        case 'float': {
-                                            return 0.0;
-                                        }
-                                        case 'bool': {
-                                            return false;
-                                        }
-                                        case 'Optional': {
-                                            return undefined;
-                                        }
-                                        case 'str':
-                                            return '';
-                                        default: {
-                                            break;
-                                        }
-                                    }
-                                }
-                                throw new pytorch.Error(`Unsupported parameter type '${JSON.stringify(type)}'.`);
-                            };
                             if (arg.name !== 'self') {
-                                const type = arg.parameterType;
-                                const value = defaultValue(type, arg.name);
+                                const value = execution.graph.addInput(arg.name);
+                                value.setType(execution.type(arg.parameterType));
                                 if (pytorch.Utility.isTensor(value)) {
                                     value.__variable__ = arg.name;
                                     value.__origin__ = 'graph-input';
@@ -1910,6 +1856,7 @@ pytorch.Execution = class extends python.Execution {
             case 'float32?': return new torch.OptionalType(new torch.FloatType());
             case 'float32[]?': return new torch.OptionalType(new torch.ListType(new torch.FloatType()));
             case 'string': return new torch.StringType();
+            case 'string[1]':
             case 'string[]': return new torch.ListType(new torch.StringType());
             case 'string[][]': return new torch.ListType(new torch.ListType(new torch.StringType()));
             case 'string?': return new torch.OptionalType(new torch.StringType());
@@ -2137,6 +2084,9 @@ pytorch.jit.Execution = class extends pytorch.Execution {
             }
             return_node() {
                 return this._block.return_node();
+            }
+            addInput(name) {
+                return this._block.addInput(name);
             }
         });
         this.registerType('torch.Block', class {
@@ -2548,12 +2498,10 @@ pytorch.jit.Execution = class extends pytorch.Execution {
                 }
                 if (expression.target.type === 'id' && expression.target.value === 'uninitialized') {
                     const type = this.type(expression.args[0], context);
-                    // let value = this.expression(expression.args[0], context);
                     const node = this._graph.create('prim::Uninitialized');
                     const value = node.addOutput();
                     value.setType(type);
                     return value;
-                    // throw new pytorch.Error(`Unsupported uninitialized type '${type.kind()}'.`);
                 }
                 if (expression.target.type === 'id' && expression.target.value === 'unchecked_cast') {
                     let value = this.expression(expression.args[1], context);
@@ -2613,9 +2561,11 @@ pytorch.jit.Execution = class extends pytorch.Execution {
                         const node = this._graph.create('aten::__getitem__.t');
                         node.addInput(target);
                         if (target.type().getKeyType() instanceof torch.StringType && typeof key === 'string') {
-                            const value = this.invoke('torch.Value', [node]);
+                            const value = new torch.Value(node);
                             value.value = key;
                             key = value;
+                        } else if (target.type().getKeyType() instanceof torch.StringType && key.type() instanceof torch.StringType) {
+                            // continue
                         } else {
                             throw new pytorch.Error(`Unsupported dictionary key type.`);
                         }
@@ -4721,6 +4671,8 @@ pytorch.Utility = class {
             return 'int64[]';
         } else if (Array.isArray(value) && value.every((item) => Number(item) === item)) {
             return 'float32[]';
+        } else if (pytorch.Utility.isInstance(value, 'torch.Value')) {
+            return pytorch.Utility.toType(value.type());
         }
         const text = (JSON.stringify(value) || '(undefined)').substring(0, 10);
         throw new pytorch.Error(`Unsupported ops argument type '${text}'.`);

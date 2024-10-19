@@ -853,14 +853,17 @@ python.Parser = class {
     }
 
     _type() {
-        const type = this._node();
-        type.type = 'type';
-        type.name = this._expression(-1, ['[', '=']);
-        if (type.name) {
+        const target = this._expression(-1, ['[', '=']);
+        if (target) {
             if (this._tokenizer.peek().value === '[') {
-                type.arguments = this._typeArguments();
+                const type = this._node();
+                type.type = '[]';
+                type.target = target;
+                type.arguments = this._expressions();
+                // type.arguments = this._typeArguments();
+                return type;
             }
-            return type;
+            return target;
         }
         return null;
     }
