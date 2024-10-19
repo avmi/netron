@@ -6515,7 +6515,7 @@ python.Execution = class {
                 return list.join('');
             }
         });
-        this.registerType('torch._C.FunctionSchemaLexer', class {
+        this.registerType('torch._C.SchemaLexer', class {
             constructor(buffer) {
                 this.buffer = buffer;
                 this.position = 0;
@@ -6991,7 +6991,7 @@ python.Execution = class {
             }
             _parse() {
                 if (this._buffer) {
-                    const L = new torch._C.FunctionSchemaLexer(this._buffer);
+                    const L = new torch._C.SchemaLexer(this._buffer);
                     this._arguments = [];
                     this._is_vararg = false;
                     this._kwarg_only = false;
@@ -7083,6 +7083,7 @@ python.Execution = class {
                 const returns = this.returns;
                 const braces = !this.is_varret &&
                    (returns.length !== 1 ||
+                    returns[0].name ||
                     returns[0].real_type instanceof torch.TupleType ||
                     returns[0].real_type instanceof torch.ListType && returns[0].real_type.getElementType() instanceof torch.TupleType);
                 if (braces) {

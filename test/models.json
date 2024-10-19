@@ -5782,7 +5782,6 @@
     "type":     "pytorch",
     "target":   "netron_issue_547_1.pt",
     "source":   "https://github.com/lutzroeder/netron/files/5137393/netron_issue_547_1.zip[netron_issue_547_1.pt]",
-    "error":    "Unknown function 'torch.add'.",
     "link":     "https://github.com/lutzroeder/netron/issues/547"
   },
   {

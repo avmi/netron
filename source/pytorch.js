@@ -364,7 +364,8 @@ pytorch.Node = class {
             const value = metadata.type(key);
             const type = value ? { ...value } : { name };
             type.identifier = name;
-            type.name = type.name.indexOf('::') === -1 ? type.name : type.name.split('::').pop().split('.')[0];
+            [name] = type.name.split('(');
+            type.name = name.indexOf('::') === -1 ? name : name.split('::').pop().split('.')[0];
             return type;
         };
         const createAttribute = (metadata, name, value) => {
@@ -1213,6 +1214,7 @@ pytorch.Container.Zip = class extends pytorch.Container {
             execution.trace = false;
             const module = torch.jit.load(reader);
             execution.trace = true;
+            execution.registerMetadata(metadata);
             if (module.data && module.data.forward) {
                 this.module = module;
             } else {
@@ -1279,9 +1281,10 @@ pytorch.Container.ModelJson = class extends pytorch.Container {
             this.producer = this._model.producerName + (this._model.producerVersion ? ` v${this._model.producerVersion}` : '');
         }
         this.format = reader.has_record('attributes.pkl') ? 'TorchScript v1.1' : 'TorchScript v1.0';
-        execution.false = true;
+        execution.trace = false;
         const module = torch.jit.load(reader);
         execution.trace = true;
+        execution.registerMetadata(metadata);
         if (module.data && module.data.forward) {
             this.module = module;
         } else {
@@ -1937,11 +1940,17 @@ pytorch.Execution = class extends python.Execution {
         const modules = new Set();
         for (const [name, type] of metadata._types) {
             if (name.indexOf('::') !== -1) {
-                const [name, overload_name] = type.name.split('.');
-                const args = type.inputs.map((arg) => new torch.Argument(arg.name, null, this.toType(arg.type), null, arg.default, arg.kwarg_only || false, arg.alias_info));
-                const returns = type.outputs.map((arg) => new torch.Argument(arg.name, null, this.toType(arg.type), null, arg.default, arg.kwarg_only || false, arg.alias_info));
-                const schema = new torch.FunctionSchema(name, overload_name || '', args, returns, type.is_vararg || false, type.is_varret || false);
-                // console.log(schema.__str__());
+                // const [name, overload_name] = type.name.split('.');
+                // const args = type.inputs.map((arg) => new torch.Argument(arg.name, null, this.toType(arg.type), null, arg.default, arg.kwarg_only || false, arg.alias_info));
+                // const returns = type.outputs.map((arg) => new torch.Argument(arg.name, null, this.toType(arg.type), null, arg.default, arg.kwarg_only || false, arg.alias_info));
+                // let schema = new torch.FunctionSchema(name, overload_name || '', args, returns, type.is_vararg || false, type.is_varret || false);
+                // if (type.name.indexOf('(') === -1) {
+                //     console.log(schema.__str__());
+                // }
+                const schema = torch.FunctionSchema.parse(type.name);
+                if (type.category) {
+                    schema.category = type.category;
+                }
                 const op = new torch._C.Operator(schema);
                 registry.registerOperator(op);
                 modules.add(type.name.split('::')[0]);
@@ -2131,6 +2140,23 @@ pytorch.jit.Execution = class extends pytorch.Execution {
             kind() {
                 return this._kind;
             }
+            schema() {
+                if (this._op === undefined) {
+                    this._op = null;
+                    const registry = torch._C._get_registry();
+                    const index = this._kind.indexOf('.');
+                    const name =    index === -1 ? this._kind : this._kind.substring(0, index);
+                    const overload_name = index === -1 ? '' : this._kind.substring(index + 1);
+                    const candidates = registry.getAllOperatorsFor(name);
+                    for (const candidate of candidates) {
+                        if (candidate.schema().overload_name === overload_name) {
+                            this._op = candidate;
+                            break;
+                        }
+                    }
+                }
+                return this._op ? this._op.schema() : null;
+            }
             inputs() {
                 return this._inputs;
             }
@@ -2239,8 +2265,7 @@ pytorch.jit.Execution = class extends pytorch.Execution {
         });
         this._metadata = metadata;
         this._types = new Map();
-        for (const [, value] of this._metadata._types) {
-            const name = value.name;
+        for (const [name, value] of this._metadata._types) {
             if (name.indexOf('::') !== -1) {
                 const index = name.lastIndexOf('.');
                 const key = index === -1 ? name : name.substring(0, index);
@@ -2846,7 +2871,10 @@ pytorch.jit.Execution = class extends pytorch.Execution {
         const [schema, evalArgs] = overload;
         const copyArgs = Array.prototype.slice.call(args);
         const copyEvalArgs = Array.prototype.slice.call(evalArgs);
-        const node = this._graph.create(schema.name);
+        const index = schema.name.indexOf('(');
+        const op = index === -1 ? schema.name : schema.name.substring(0, index);
+        const node = this._graph.create(op);
+        // const x = node.schema();
         node.schema = schema;
         const referencedParameters = [];
         const parameters = Array.prototype.slice.call(schema.inputs || []).concat(Array.prototype.slice.call(schema.attributes || []));
@@ -5255,7 +5283,9 @@ pytorch.Metadata = class {
         if (data) {
             const items = JSON.parse(data);
             for (const item of items) {
-                this._types.set(item.name, item);
+                const index = item.name.indexOf('(');
+                const key = index === -1 ? item.name : item.name.substring(0, index);
+                this._types.set(key, item);
             }
         }
     }
